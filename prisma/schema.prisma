@@ -1,0 +1,423 @@
+// MongoDB Schema for GamingHub
+// Optimized for scalability, indexing, and aggregation pipelines
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  username      String?   @unique
+  password      String?   // For credentials auth
+  image         String?
+  bio           String?
+  
+  // Role
+  role          String   @default("user") // user, admin
+  
+  // Stats
+  totalGamesPlayed Int      @default(0)
+  totalScore       Int      @default(0)
+  winRate          Float    @default(0.0)
+  currentStreak    Int      @default(0)
+  longestStreak    Int      @default(0)
+  rank             String   @default("Beginner") // Beginner, Intermediate, Advanced, Expert, Master
+  level            Int      @default(1)
+  xp               Int      @default(0)
+  
+  // Brain Power Metrics
+  logicScore       Int      @default(0)
+  memoryScore      Int      @default(0)
+  strategyScore    Int      @default(0)
+  reactionScore    Int      @default(0)
+  
+  // Timestamps
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  lastActiveAt  DateTime   @default(now())
+  
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  gameSessions  GameSession[]
+  scores        Score[]
+  achievements  Achievement[]
+  statsSnapshots StatsSnapshot[]
+  
+  @@index([totalScore])
+  @@index([level])
+  @@index([createdAt])
+  @@map("users")
+}
+
+// ============================================
+// AUTHENTICATION (NextAuth)
+// ============================================
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.String
+  access_token      String? @db.String
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.String
+  session_state     String?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// GAMES
+// ============================================
+
+enum GameType {
+  CHESS
+  SUDOKU
+  HANGMAN
+  LUDO
+  UNO
+  TIC_TAC_TOE
+  VISUAL_CARD_MATCH
+  FOUR_IN_ROW
+  CODING_GAME
+}
+
+enum GameDifficulty {
+  EASY
+  MEDIUM
+  HARD
+  EXPERT
+}
+
+enum SessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model Game {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  type         GameType @unique
+  name         String
+  description  String
+  
+  // Brain categories this game trains
+  trainsLogic    Boolean @default(false)
+  trainsMemory   Boolean @default(false)
+  trainsStrategy Boolean @default(false)
+  trainsReaction Boolean @default(false)
+  
+  // Metadata
+  rules          String   // JSON string
+  minPlayers     Int      @default(1)
+  maxPlayers     Int      @default(1)
+  avgDuration    Int      // In seconds
+  
+  // Admin controlled fields
+  isActive       Boolean  @default(true)
+  showInDashboard Boolean @default(true)
+  isFeatured     Boolean  @default(false)
+  isComingSoon   Boolean  @default(false)
+  isNewlyLaunched Boolean @default(false)
+  displayOrder   Int      @default(0)
+  thumbnailUrl   String?
+  bannerUrl      String?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // Relations
+  sessions       GameSession[]
+  scores         Score[]
+  leaderboards   Leaderboard[]
+  
+  @@index([isActive])
+  @@map("games")
+}
+
+// ============================================
+// GAME SESSIONS
+// ============================================
+
+model GameSession {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String        @db.ObjectId
+  gameId       String        @db.ObjectId
+  gameType     GameType
+  
+  // Session details
+  status       SessionStatus @default(IN_PROGRESS)
+  difficulty   GameDifficulty?
+  
+  // Scoring
+  score        Int           @default(0)
+  moves        Int           @default(0)
+  timeSpent    Int           @default(0) // In seconds
+  accuracy     Float?        // 0-100
+  
+  // Game state (stored as JSON for flexibility)
+  gameState    String?       @db.String // JSON serialized game state
+  
+  // Results
+  won          Boolean?
+  abandoned    Boolean       @default(false)
+  
+  // Anti-cheat
+  checksumValid Boolean      @default(true)
+  
+  // Timestamps
+  startedAt    DateTime      @default(now())
+  completedAt  DateTime?
+  
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game         Game          @relation(fields: [gameId], references: [id])
+  score_entry  Score?
+  
+  @@index([userId, gameType])
+  @@index([gameType, status])
+  @@index([startedAt])
+  @@index([userId, startedAt])
+  @@map("game_sessions")
+}
+
+// ============================================
+// SCORING & LEADERBOARDS
+// ============================================
+
+model Score {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String   @db.ObjectId
+  gameId        String   @db.ObjectId
+  sessionId     String   @unique @db.ObjectId
+  gameType      GameType
+  
+  // Core scoring
+  points        Int
+  rank          Int?     // Position in leaderboard
+  
+  // Performance metrics
+  timeSpent     Int      // Seconds
+  accuracy      Float?   // 0-100
+  moves         Int?
+  difficulty    GameDifficulty?
+  
+  // Bonus points
+  speedBonus    Int      @default(0)
+  accuracyBonus Int      @default(0)
+  streakBonus   Int      @default(0)
+  
+  // Brain power contributions
+  logicPoints      Int @default(0)
+  memoryPoints     Int @default(0)
+  strategyPoints   Int @default(0)
+  reactionPoints   Int @default(0)
+  
+  // Metadata
+  isPersonalBest Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game    Game        @relation(fields: [gameId], references: [id])
+  session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, gameType])
+  @@index([gameType, points])
+  @@index([userId, points])
+  @@index([createdAt])
+  @@index([gameType, createdAt])
+  @@map("scores")
+}
+
+enum LeaderboardType {
+  GLOBAL
+  WEEKLY
+  MONTHLY
+  ALL_TIME
+}
+
+model Leaderboard {
+  id           String          @id @default(auto()) @map("_id") @db.ObjectId
+  gameId       String?         @db.ObjectId
+  gameType     GameType?
+  type         LeaderboardType
+  
+  // Period tracking
+  startDate    DateTime?
+  endDate      DateTime?
+  
+  // Top entries (denormalized for performance)
+  entries      String          @db.String // JSON array of top 100 entries
+  
+  // Cache metadata
+  lastUpdated  DateTime        @default(now())
+  isActive     Boolean         @default(true)
+  
+  // Relations
+  game         Game?           @relation(fields: [gameId], references: [id])
+  
+  @@index([gameType, type])
+  @@index([type, endDate])
+  @@index([lastUpdated])
+  @@map("leaderboards")
+}
+
+// ============================================
+// ACHIEVEMENTS
+// ============================================
+
+enum AchievementCategory {
+  GAMES_PLAYED
+  SCORE_MILESTONE
+  STREAK
+  SKILL_MASTERY
+  SPEED
+  ACCURACY
+  SPECIAL
+}
+
+model Achievement {
+  id          String              @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String              @db.ObjectId
+  
+  // Achievement details
+  category    AchievementCategory
+  title       String
+  description String
+  gameType    GameType?
+  
+  // Requirements met
+  requirement String              // JSON describing what was achieved
+  value       Int?                // The value that unlocked it
+  
+  // Rewards
+  xpReward    Int                 @default(0)
+  
+  // Metadata
+  unlockedAt  DateTime            @default(now())
+  
+  // Relations
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, category])
+  @@index([userId, unlockedAt])
+  @@index([category])
+  @@map("achievements")
+}
+
+// ============================================
+// ANALYTICS & STATS TRACKING
+// ============================================
+
+model StatsSnapshot {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String   @db.ObjectId
+  
+  // Snapshot period
+  date              DateTime @default(now())
+  periodType        String   // "daily", "weekly", "monthly"
+  
+  // Aggregated stats
+  gamesPlayed       Int      @default(0)
+  totalScore        Int      @default(0)
+  avgScore          Float    @default(0)
+  winRate           Float    @default(0)
+  
+  // Brain metrics
+  logicScore        Int      @default(0)
+  memoryScore       Int      @default(0)
+  strategyScore     Int      @default(0)
+  reactionScore     Int      @default(0)
+  
+  // Per-game breakdown (JSON)
+  gameBreakdown     String?  @db.String // JSON object
+  
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, date, periodType])
+  @@index([userId, date])
+  @@index([date, periodType])
+  @@map("stats_snapshots")
+}
+
+// ============================================
+// EMAIL VERIFICATION (OTP)
+// ============================================
+
+model EmailVerification {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String
+  otp       String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  
+  @@index([email])
+  @@index([otp])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+// ============================================
+// AVATAR MANAGEMENT
+// ============================================
+
+model Avatar {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String   @unique
+  url         String
+  category    String?  // "animals", "fantasy", "space", etc.
+  isActive    Boolean  @default(true)
+  isPremium   Boolean  @default(false)
+  displayOrder Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([isActive])
+  @@index([category])
+  @@map("avatars")
+}
