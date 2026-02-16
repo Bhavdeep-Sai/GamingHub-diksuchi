@@ -28,7 +28,7 @@ export function Providers({ children }: ProvidersProps) {
   );
   
   return (
-    <SessionProvider>
+    <SessionProvider basePath="/api/auth">
       <QueryClientProvider client={queryClient}>
         {children}
         <Toaster

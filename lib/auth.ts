@@ -7,9 +7,78 @@ import { NextAuthOptions } from 'next-auth';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import GoogleProvider from 'next-auth/providers/google';
 import prisma from '@/lib/prisma';
+import type { Adapter } from 'next-auth/adapters';
+
+/**
+ * Generate a unique username from email or name
+ */
+async function generateUniqueUsername(email?: string | null, name?: string | null): Promise<string> {
+  // Start with email prefix or name
+  let baseUsername = '';
+  
+  if (email) {
+    baseUsername = email.split('@')[0];
+  } else if (name) {
+    baseUsername = name.toLowerCase().replace(/\s+/g, '');
+  } else {
+    baseUsername = 'user';
+  }
+  
+  // Clean the username: remove special characters, keep only alphanumeric and underscores
+  baseUsername = baseUsername.replace(/[^a-z0-9_]/gi, '').substring(0, 20);
+  
+  // Ensure it's not empty
+  if (!baseUsername) {
+    baseUsername = 'user';
+  }
+  
+  // Try the base username first
+  let username = baseUsername;
+  let counter = 1;
+  
+  // Keep trying until we find a unique username
+  while (true) {
+    const existing = await prisma.user.findUnique({
+      where: { username },
+    });
+    
+    if (!existing) {
+      return username;
+    }
+    
+    // Add a number suffix and try again
+    username = `${baseUsername}${counter}`;
+    counter++;
+  }
+}
+
+/**
+ * Custom adapter that extends PrismaAdapter to handle username generation
+ */
+function customPrismaAdapter(p: typeof prisma): Adapter {
+  const baseAdapter = PrismaAdapter(p);
+  
+  return {
+    ...baseAdapter,
+    createUser: async (data: { email: string; emailVerified: Date | null; name?: string | null; image?: string | null }) => {
+      // Generate a unique username
+      const username = await generateUniqueUsername(data.email, data.name);
+      
+      // Create the user with the generated username
+      const user = await p.user.create({
+        data: {
+          ...data,
+          username,
+        },
+      });
+      
+      return user;
+    },
+  } as Adapter;
+}
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma) as any,
+  adapter: customPrismaAdapter(prisma),
   providers: [
     // Google OAuth
     ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
@@ -109,7 +178,6 @@ export const authOptions: NextAuthOptions = {
   
   pages: {
     signIn: '/auth/signin',
-    error: '/auth/error',
   },
   
   session: {
