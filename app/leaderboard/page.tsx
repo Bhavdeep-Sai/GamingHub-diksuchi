@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, Badge, Button } from '@/components/ui';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar';
 import { Trophy, Crown, Medal, TrendingUp } from 'lucide-react';
 import { GAMES } from '@/lib/constants';
 
@@ -82,13 +83,82 @@ export default function LeaderboardPage() {
     return entry.username || entry.name || 'Anonymous';
   };
   
-  const getAvatar = (entry: LeaderboardEntry) => {
-    if (entry.image) return entry.image;
-    // Generate avatar based on username/name
-    const name = getDisplayName(entry);
-    const emojis = ['🏆', '🧠', '♟️', '👑', '🥷', '🎯', '🧩', '⚡', '💭', '🔥', '🎮', '🌟'];
-    const index = name.charCodeAt(0) % emojis.length;
-    return emojis[index];
+  // Component to render avatar with proper handling of all avatar types
+  const PlayerAvatar = ({ entry, size = "md" }: { entry: LeaderboardEntry; size?: "sm" | "md" | "lg" }) => {
+    const [avatarUrl, setAvatarUrl] = useState<string>('');
+    const [loading, setLoading] = useState(true);
+    const displayName = getDisplayName(entry);
+    
+    const sizeClasses = {
+      sm: "w-8 h-8",
+      md: "w-12 h-12",
+      lg: "w-16 h-16"
+    };
+    
+    useEffect(() => {
+      async function fetchAvatarUrl() {
+        const image = entry.image;
+        
+        if (!image) {
+          setLoading(false);
+          return;
+        }
+
+        // If it's already a URL (Google profile pic), use directly
+        if (image.startsWith('http')) {
+          setAvatarUrl(image);
+          setLoading(false);
+          return;
+        }
+
+        // If it's 'initials', don't fetch
+        if (image === 'initials') {
+          setLoading(false);
+          return;
+        }
+
+        // Otherwise, it's a database avatar ID - fetch it
+        try {
+          const response = await fetch(`/api/avatars/${image}`);
+          if (response.ok) {
+            const data = await response.json();
+            setAvatarUrl(data.avatar.url);
+          }
+        } catch (error) {
+          console.error('Error fetching avatar:', error);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      fetchAvatarUrl();
+    }, [entry.image]);
+    
+    const initials = displayName
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2) || 'U';
+    
+    return (
+      <Avatar className={sizeClasses[size]}>
+        {loading ? (
+          <AvatarFallback>{initials}</AvatarFallback>
+        ) : avatarUrl ? (
+          <>
+            <AvatarImage src={avatarUrl} alt={displayName} />
+            <AvatarFallback>{initials}</AvatarFallback>
+          </>
+        ) : (
+          <AvatarFallback>{initials}</AvatarFallback>
+        )}
+      </Avatar>
+    );
+  };
+  
+  const renderAvatar = (entry: LeaderboardEntry) => {
+    return <PlayerAvatar entry={entry} size="md" />;
   };
   
   return (
@@ -158,7 +228,7 @@ export default function LeaderboardPage() {
                           <CardContent className="pt-6 pb-6">
                             <div className="flex flex-col items-center gap-3">
                               <div className="relative">
-                                <div className="text-4xl">{getAvatar(player)}</div>
+                                <PlayerAvatar entry={player} size="lg" />
                                 {index === 0 && (
                                   <Crown className="absolute -top-2 -right-2 h-6 w-6 text-warning" />
                                 )}
@@ -190,7 +260,7 @@ export default function LeaderboardPage() {
                             <div className="w-8 flex justify-center">
                               {getRankIcon(player.rank)}
                             </div>
-                            <div className="text-2xl">{getAvatar(player)}</div>
+                            {renderAvatar(player)}
                             <div>
                               <p className="font-semibold">{getDisplayName(player)}</p>
                               <p className="text-sm text-muted-foreground">Level {player.level}</p>
